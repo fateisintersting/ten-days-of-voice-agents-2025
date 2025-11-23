@@ -1,5 +1,4 @@
 import logging
-
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
@@ -12,11 +11,13 @@ from livekit.agents import (
     cli,
     metrics,
     tokenize,
-    # function_tool,
-    # RunContext
+    function_tool,
+    #RunContext
 )
 from livekit.plugins import murf, silero, google, deepgram, noise_cancellation
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
+import json, os
+from datetime import datetime
 
 logger = logging.getLogger("agent")
 
@@ -26,11 +27,191 @@ load_dotenv(".env.local")
 class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
-            instructions="""You are a helpful voice AI assistant. The user is interacting with you via voice, even if you perceive the conversation as text.
-            You eagerly assist users with their questions by providing information from your extensive knowledge.
-            Your responses are concise, to the point, and without any complex formatting or punctuation including emojis, asterisks, or other symbols.
-            You are curious, friendly, and have a sense of humor.""",
+            instructions="""Role & Persona
+You are BrewBuddy, a friendly, warm, conversational barista for the coffee brand Moonbeam Coffee Roasters.
+Your tone is friendly, upbeat, and helpful—like a real barista taking a customer’s order while keeping things efficient.
+
+Core Responsibilities
+
+Maintain and update an order state object with this structure:
+
+{
+  "drinkType": "string",
+  "size": "string",
+  "milk": "string",
+  "extras": ["string"],
+  "name": "string"
+}
+
+
+Guide the user through the entire order, asking clarifying questions only for missing or unclear fields.
+
+Never assume details unless the user clearly states them.
+
+Confirm final order before saving.
+
+Once complete, call the Python function save_order_to_json(order: dict) containing the final order.
+
+After saving, present a neat text summary of the order for the customer.
+
+Conversation Flow Rules
+1. Start
+
+Greet the customer.
+
+Ask for the first missing field (drink type).
+
+2. State Completion Logic
+
+For each field in the order:
+
+If missing → ask a clarifying question.
+
+If ambiguous → ask for confirmation.
+
+If user gives multiple details at once → update all relevant fields.
+
+3. Order Field Requirements
+
+drinkType: e.g., latte, cappuccino, cold brew, mocha, americano
+
+size: small, medium, large
+
+milk: whole, oat, soy, almond, 2%, no milk
+
+extras: syrups, sweeteners, toppings, extra shots (array)
+
+name: customer’s preferred name
+
+4. At All Times
+
+Speak as a friendly barista.
+
+Keep responses concise and natural, like actual order-taking.
+
+If the user changes a detail mid-order, update the order state.
+
+5. Order Completion
+
+When all fields are filled:
+
+Read back the final order.
+
+Ask for confirmation: “Does everything look right?”
+
+On confirmation, call:
+
+save_order_to_json(order_state)
+after that
+generate_drink_html(order_state)
+
+Then send the customer a warm thank-you message and a clean summary.
+
+tools = [
+    {
+        "name": "save_order_to_json",
+        "description": "Save the completed coffee order to a JSON file.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "order": {"type": "object"}
+            },
+            "required": ["order"]
+        }
+    },
+    {
+        "name": "generate_drink_html",
+        "description": "Create the Html Img fo Coffe.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "order": {"type": "object"}
+            },
+            "required": ["order"]
+        }
+    }
+]
+""",
         )
+        order_state = {
+        "drinkType": "",
+        "size": "",
+        "milk": "",
+        "extras": [],
+        "name": ""
+        }
+        
+    @function_tool
+    async def save_order_to_json(self, order: dict):
+        """Save a completed coffee order to a timestamped JSON file."""
+        os.makedirs("orders", exist_ok=True)
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        filename = f"orders/order_{timestamp}.json"
+
+        with open(filename, "w") as f:
+            json.dump(order, f, indent=2)
+             
+        return {
+            "status": "success",
+            "file": filename
+        }
+    @function_tool   
+    async def generate_drink_html(self,order: dict):
+     """Generate a simple HTML visualization of the customer's drink order."""
+     size_map = {
+        "small": "80px",
+        "medium": "120px",
+        "large": "160px"
+    }
+
+     cup_height = size_map.get(order["size"], "120px")
+     show_whipped = "whipped cream" in order.get("extras", [])
+
+     whipped_html = """
+    <div class="whipped"></div>
+    """ if show_whipped else ""
+
+     html = f"""
+    <html>
+    <head>
+    <style>
+        body {{
+            background: #f4f1ea;
+            font-family: sans-serif;
+            text-align: center;
+            padding-top: 40px;
+        }}
+        .cup {{
+            width: 60px;
+            height: {cup_height};
+            background: #c17f43;
+            margin: 0 auto;
+            border-radius: 0 0 12px 12px;
+        }}
+        .whipped {{
+            width: 0;
+            height: 0;
+            border-left: 25px solid transparent;
+            border-right: 25px solid transparent;
+            border-bottom: 40px solid white;
+            margin: 0 auto;
+        }}
+    </style>
+    </head>
+    <body>
+        <h2>{order["size"].capitalize()} {order["drinkType"].capitalize()}</h2>
+        {whipped_html}
+        <div class="cup"></div>
+    </body>
+    </html>
+    """
+
+    # Save to disk
+     with open("drink_preview.html", "w") as f:
+        f.write(html)
+
+     return {"status": "success", "file": "drink_preview.html"}
+
 
     # To add tools, use the @function_tool decorator.
     # Here's an example that adds a simple weather tool.
@@ -87,6 +268,8 @@ async def entrypoint(ctx: JobContext):
         # See more at https://docs.livekit.io/agents/build/audio/#preemptive-generation
         preemptive_generation=True,
     )
+   
+    
 
     # To use a realtime model instead of a voice pipeline, use the following session setup instead.
     # (Note: This is for the OpenAI Realtime API. For other providers, see https://docs.livekit.io/agents/models/realtime/))
@@ -101,6 +284,8 @@ async def entrypoint(ctx: JobContext):
     # Metrics collection, to measure pipeline performance
     # For more information, see https://docs.livekit.io/agents/build/metrics/
     usage_collector = metrics.UsageCollector()
+    
+    
 
     @session.on("metrics_collected")
     def _on_metrics_collected(ev: MetricsCollectedEvent):

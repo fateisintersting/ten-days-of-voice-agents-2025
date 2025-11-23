@@ -1,0 +1,9 @@
+{
+  "size": "small",
+  "drinkType": "latte",
+  "milk": "oat milk",
+  "extras": [
+    "extra syrup"
+  ],
+  "name": "Paneer"
+}
