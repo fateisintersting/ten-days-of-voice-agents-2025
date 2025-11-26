@@ -23,202 +23,117 @@ logger = logging.getLogger("agent")
 
 load_dotenv(".env.local")
 
+LOG_FILE = "wellness_log.json"
+
+def load_sessions():
+    if not os.path.exists(LOG_FILE):
+        return {"sessions": []}
+    with open(LOG_FILE, "r") as f:
+        return json.load(f)
+
+
+def save_session(entry):
+    data = load_sessions()
+    data["sessions"].append(entry)
+    with open(LOG_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
 
 class Assistant(Agent):
+    previous = load_sessions()["sessions"][-1] if load_sessions()["sessions"] else None
+    previous_note = ""
+    if previous:
+        previous_note = f"""
+          Here is the previous session data you may reference:
+ 
+        - Previous mood: {previous["mood"]}
+        - Previous energy: {previous["energy"]}
+        - Previous goals: {', '.join(previous["goals"])}
+        - Previous summary: {previous["summary"]}
+         Please reference 1 small item from the previous day when greeting the user."""
     def __init__(self) -> None:
         super().__init__(
-            instructions="""Role & Persona
-You are BrewBuddy, a friendly, warm, conversational barista for the coffee brand Moonbeam Coffee Roasters.
-Your tone is friendly, upbeat, and helpful—like a real barista taking a customer’s order while keeping things efficient.
+            instructions= """
+You are Zomato’s SDR (Sales Development Representative) voice agent.  
+Your role is to greet users warmly, understand their needs, answer questions strictly using provided company content, collect lead information, and produce a summary at the end of the call.
 
-Core Responsibilities
+========================
+COMPANY OVERVIEW (Zomato)
+========================
+Zomato is an Indian multinational food-tech company specializing in:
+- Online food ordering & delivery  
+- Restaurant discovery, menus, reviews  
+- Table reservations  
+- Contactless dining  
+- B2B services such as “Zomato for Enterprise”
 
-Maintain and update an order state object with this structure:
+Founded in 2008 as Foodiebay by Deepinder Goyal and Pankaj Chaddah, rebranded as Zomato in 2010.  
+Mission: “Better food for more people.”  
+Active across India and multiple global markets.
 
-{
-  "drinkType": "string",
-  "size": "string",
-  "milk": "string",
-  "extras": ["string"],
-  "name": "string"
-}
+========================
+BASIC FAQ DATA
+========================
+Q: What does Zomato do?  
+A: Zomato connects customers with restaurants and delivery partners through food delivery, restaurant discovery, and dining services.
 
+Q: Who is Zomato for?  
+A: Anyone looking to order food online, discover restaurants, book tables, or use enterprise dining solutions.
 
-Guide the user through the entire order, asking clarifying questions only for missing or unclear fields.
+Q: Do you have a free tier?  
+A: Using the Zomato app for browsing restaurants and placing orders is free. Charges apply for orders, delivery, and premium programs if selected.
 
-Never assume details unless the user clearly states them.
+Q: Do restaurants pay to list?  
+A: Basic listing is free; additional promotional services may be available (only mention if asked).
 
-Confirm final order before saving.
+Q: Do you operate outside India?  
+A: Yes, Zomato has had an international presence in several countries.
 
-Once complete, call the Python function save_order_to_json(order: dict) containing the final order.
+========================
+AGENT BEHAVIOR RULES
+========================
+1. Greet warmly and ask what brought them here.
+2. Keep the conversation focused on understanding their needs.
+3. When user asks about the company:
+   - Search within the supplied FAQ text (simple keyword match).
+   - Answer ONLY from this content; do NOT invent details.
+4. Gradually collect lead details in a natural conversation:
+   - Name
+   - Company
+   - Email
+   - Role
+   - Use case (why they’re interested)
+   - Team size
+   - Timeline (Now / Soon / Later)
+5. Store these fields internally in JSON form as user replies:
+   {
+     "name": "",
+     "company": "",
+     "email": "",
+     "role": "",
+     "use_case": "",
+     "team_size": "",
+     "timeline": ""
+   }
+6. When the user indicates the call is ending ("that’s all", "done", "thanks"):
+   - Give a short verbal summary of who they are, what they need, and timeline.
+   - Output the final collected JSON.
 
-After saving, present a neat text summary of the order for the customer.
+========================
+TONE & STYLE
+========================
+Friendly, concise, professional.  
+Never guess or fabricate information outside the provided company details.  
+Always aim to understand user goals and move toward lead qualification.
 
-Conversation Flow Rules
-1. Start
-
-Greet the customer.
-
-Ask for the first missing field (drink type).
-
-2. State Completion Logic
-
-For each field in the order:
-
-If missing → ask a clarifying question.
-
-If ambiguous → ask for confirmation.
-
-If user gives multiple details at once → update all relevant fields.
-
-3. Order Field Requirements
-
-drinkType: e.g., latte, cappuccino, cold brew, mocha, americano
-
-size: small, medium, large
-
-milk: whole, oat, soy, almond, 2%, no milk
-
-extras: syrups, sweeteners, toppings, extra shots (array)
-
-name: customer’s preferred name
-
-4. At All Times
-
-Speak as a friendly barista.
-
-Keep responses concise and natural, like actual order-taking.
-
-If the user changes a detail mid-order, update the order state.
-
-5. Order Completion
-
-When all fields are filled:
-
-Read back the final order.
-
-Ask for confirmation: “Does everything look right?”
-
-On confirmation, call:
-
-save_order_to_json(order_state)
-after that
-generate_drink_html(order_state)
-
-Then send the customer a warm thank-you message and a clean summary.
-
-tools = [
-    {
-        "name": "save_order_to_json",
-        "description": "Save the completed coffee order to a JSON file.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "order": {"type": "object"}
-            },
-            "required": ["order"]
-        }
-    },
-    {
-        "name": "generate_drink_html",
-        "description": "Create the Html Img fo Coffe.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "order": {"type": "object"}
-            },
-            "required": ["order"]
-        }
-    }
-]
-""",
-        )
-        order_state = {
-        "drinkType": "",
-        "size": "",
-        "milk": "",
-        "extras": [],
-        "name": ""
-        }
-        
-    @function_tool
-    async def save_order_to_json(self, order: dict):
-        """Save a completed coffee order to a timestamped JSON file."""
-        os.makedirs("orders", exist_ok=True)
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"orders/order_{timestamp}.json"
-
-        with open(filename, "w") as f:
-            json.dump(order, f, indent=2)
-             
-        return {
-            "status": "success",
-            "file": filename
-        }
-    @function_tool   
-    async def generate_drink_html(self,order: dict):
-     """Generate a simple HTML visualization of the customer's drink order."""
-     size_map = {
-        "small": "80px",
-        "medium": "120px",
-        "large": "160px"
-    }
-
-     cup_height = size_map.get(order["size"], "120px")
-     show_whipped = "whipped cream" in order.get("extras", [])
-
-     whipped_html = """
-    <div class="whipped"></div>
-    """ if show_whipped else ""
-
-     html = f"""
-    <html>
-    <head>
-    <style>
-        body {{
-            background: #f4f1ea;
-            font-family: sans-serif;
-            text-align: center;
-            padding-top: 40px;
-        }}
-        .cup {{
-            width: 60px;
-            height: {cup_height};
-            background: #c17f43;
-            margin: 0 auto;
-            border-radius: 0 0 12px 12px;
-        }}
-        .whipped {{
-            width: 0;
-            height: 0;
-            border-left: 25px solid transparent;
-            border-right: 25px solid transparent;
-            border-bottom: 40px solid white;
-            margin: 0 auto;
-        }}
-    </style>
-    </head>
-    <body>
-        <h2>{order["size"].capitalize()} {order["drinkType"].capitalize()}</h2>
-        {whipped_html}
-        <div class="cup"></div>
-    </body>
-    </html>
-    """
-
-    # Save to disk
-     with open("drink_preview.html", "w") as f:
-        f.write(html)
-
-     return {"status": "success", "file": "drink_preview.html"}
-
-
-    # To add tools, use the @function_tool decorator.
-    # Here's an example that adds a simple weather tool.
-    # You also have to add `from livekit.agents import function_tool, RunContext` to the top of this file
-    # @function_tool
-    # async def lookup_weather(self, context: RunContext, location: str):
-    #     """Use this tool to look up current weather information in the given location.
+You are now ready to act as Zomato’s SDR.
+"""
+)
+    
+    
+    
+   
+    #Use this tool to look up current weather information in the given location.
     #
     #     If the location is not supported by the weather service, the tool will indicate this. You must tell the user the location's weather is unavailable.
     #
