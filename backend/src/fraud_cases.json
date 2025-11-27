@@ -1,0 +1,18 @@
+{
+  "users": [
+    {
+      "username": "john",
+      "security_question": "What is your favorite color?",
+      "security_answer": "blue",
+      "fraud_case": {
+        "cardEnding": "4242",
+        "merchant": "ABC Industrial Supply",
+        "amount": "$129.43",
+        "timestamp": "2025-01-14 15:31",
+        "location": "San Diego, California",
+        "status": "pending_review",
+        "notes": ""
+      }
+    }
+  ]
+}
