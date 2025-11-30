@@ -1,4 +1,5 @@
 import logging
+import uuid
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
@@ -26,6 +27,8 @@ load_dotenv(".env.local")
 LOG_FILE = "wellness_log.json"
 FRAUD_DB = "fraud_cases.json"
 
+ORDERS_FILE = "orders.json"
+
 
 
 def load_sessions():
@@ -40,6 +43,16 @@ def save_session(entry):
     data["sessions"].append(entry)
     with open(LOG_FILE, "w") as f:
         json.dump(data, f, indent=2)
+        
+
+try:
+    with open(ORDERS_FILE, "r") as f:
+        ORDERS = json.load(f)
+except:
+     ORDERS = []        
+        
+
+      
 
 
 class Assistant(Agent):
@@ -57,65 +70,99 @@ class Assistant(Agent):
     def __init__(self) -> None:
         super().__init__(
             instructions = """
-You are the **Game Master** of a voice-only, single-player interactive adventure.
-Your role is to guide the player through a continuous story using only conversation
-history (no external memory). You MUST follow these rules:
+You are a voice-driven shopping assistant.  
+Your job is to help the user browse products, understand their shopping intent, 
+and create orders using the provided merchant functions.
 
-====================================================
-🌍 UNIVERSE & TONE
-====================================================
-- Setting: A classic fantasy world of magic, small villages, forests, ruins,
-  mysterious artifacts, and dangerous creatures.
-- Tone: Dramatic, immersive, descriptive, with light moments of humor.
-- You should create vivid sensory scenes the player can imagine through audio.
+You MUST follow these rules:
 
-====================================================
-🎭 YOUR ROLE AS THE GAME MASTER
-====================================================
-- You narrate scenes, respond to player actions, and move the story forward.
-- You must always end your narration with a **clear question** asking the player
-  what they want to do next.
-- You should introduce NPCs, locations, quests, threats, and discoveries naturally.
-- You must track continuity **purely through the chat history**:
-  - Remember the player’s decisions.
-  - Remember characters, items, and events you introduced.
-  - Maintain logical consistency.
+1. **Never invent products.**  
+   Only reference products returned by the `list_products` tool.
 
-====================================================
-🎮 ADVENTURE FLOW
-====================================================
-Every turn:
-  1. Read the user’s last message (their spoken action or question).
-  2. Interpret it as a character action or intent.
-  3. Describe consequences, progress, or new scenes.
-  4. Present choices or leave the world open.
-  5. End with: **“What do you do?”**
+2. **All catalog and order logic MUST be done through tools**  
+   – list_products  
+   – create_order  
+   – get_last_order  
+   You should NOT fabricate catalog data or compute totals manually.
 
-====================================================
-🗣️ VOICE-ONLY CONSTRAINTS
-====================================================
-- Keep responses concise but vivid (3–6 sentences).
-- Avoid giant info dumps.
-- Never list rules or talk about being an AI.
-- Do NOT show dice rolls unless the user explicitly asks.
+3. **Interpret natural language shopping intent.**
+   Examples:
+   - “Show me mugs under 900.”
+   - “Do you have black hoodies?”
+   - “I’ll take the second one.”
+   - “What did I just buy?”
 
-====================================================
-🚫 DO NOT:
-====================================================
-- Do not break character.
-- Do not mention system messages or meta-instructions.
-- Do not output code, JSON, or brackets unless explicitly requested by the user.
-- Do not require dice rolls unless appropriate.
+4. **When needed, automatically translate user requests into tool calls.**  
+   Always explain your tool calls to the user in natural language after you receive the tool result.
 
-====================================================
-🎉 GAME START
-====================================================
-Begin the game immediately by introducing the opening scene of the adventure.
-Ask the player what they want to do.
+5. **Product references must be grounded.**
+   - If the user says “the second hoodie”, resolve it from the last list of products you showed.
+   - If unclear, ask politely for clarification.
+
+6. **For orders:**
+   - Resolve the exact product ID(s)
+   - Include quantity (default 1 if user doesn’t specify)
+   - Create the order using the `create_order` tool
+   - Confirm the order details to the user
+
+7. **For last order queries:**
+   - Use `get_last_order`
+   - Summarize the order in simple terms
+
+8. **Be conversational, friendly, and concise.**
+   - This agent is voice-first.
+   - Keep responses short and clear.
+
+9. **Never output JSON unless returning a tool call.**
+   When talking to the user, speak naturally.
+
+Your goal:
+Provide a smooth, voice-friendly shopping flow that mirrors an ACP-inspired commerce workflow.
+
+tools=[
+    {
+        "name": "list_products",
+        "description": "List products with optional filters",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "filters": {
+                    "type": "object",
+                    "nullable": True
+                }
+            }
+        }
+    },
+    {
+        "name": "create_order",
+        "description": "Create an order from line items",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "line_items": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "product_id": {"type": "string"},
+                            "quantity": {"type": "number"}
+                        },
+                        "required": ["product_id"]
+                    }
+                }
+            },
+            "required": ["line_items"]
+        }
+    },
+    {
+        "name": "get_last_order",
+        "description": "Retrieve the last order created",
+        "parameters": {"type": "object"}
+    }
+],
+
 """
-
 )
-    
     
     
    
@@ -135,6 +182,97 @@ Ask the player what they want to do.
 def prewarm(proc: JobProcess):
     proc.userdata["vad"] = silero.VAD.load()
 
+CATALOG = [
+    {
+        "id": "mug-001",
+        "name": "Stoneware Coffee Mug",
+        "description": "Handmade ceramic mug",
+        "price": 800,
+        "currency": "INR",
+        "category": "mug",
+        "color": "white",
+    },
+    {
+        "id": "mug-002",
+        "name": "Blue Ceramic Mug",
+        "description": "Glossy blue finish",
+        "price": 950,
+        "currency": "INR",
+        "category": "mug",
+        "color": "blue",
+    },
+    {
+        "id": "hoodie-001",
+        "name": "Black Cotton Hoodie",
+        "description": "Unisex, soft cotton",
+        "price": 1600,
+        "currency": "INR",
+        "category": "hoodie",
+        "color": "black",
+        "sizes": ["S", "M", "L", "XL"]
+    },
+    {
+        "id": "tshirt-001",
+        "name": "Graphic T-Shirt",
+        "description": "Printed tee",
+        "price": 700,
+        "currency": "INR",
+        "category": "tshirt",
+        "color": "white",
+        "sizes": ["M", "L", "XL"]
+    },
+]  
+@function_tool
+def list_products(filters=None):
+    results = CATALOG
+    if filters:
+        for key, value in filters.items():
+            if key == "max_price":
+                results = [p for p in results if p["price"] <= value]
+            else:
+                results = [p for p in results if p.get(key) == value]
+    return results
+
+
+@function_tool
+def create_order(line_items):
+    total = 0
+    resolved_items = []
+
+    for item in line_items:
+        p = next((x for x in CATALOG if x["id"] == item["product_id"]), None)
+        if not p:
+            raise ValueError(f"Product {item['product_id']} not found")
+
+        qty = item.get("quantity", 1)
+        resolved_items.append({
+            "product_id": p["id"],
+            "name": p["name"],
+            "quantity": qty,
+            "unit_amount": p["price"],
+            "currency": p["currency"]
+        })
+        total += p["price"] * qty
+
+    order = {
+        "id": str(uuid.uuid4()),
+        "items": resolved_items,
+        "total": total,
+        "currency": "INR",
+        "created_at": datetime.utcnow().isoformat()
+    }
+
+    ORDERS.append(order)
+    with open(ORDERS_FILE, "w") as f:
+        json.dump(ORDERS, f, indent=2)
+
+    return order
+
+@function_tool
+def get_last_order():
+    if not ORDERS:
+        return None
+    return ORDERS[-1]
 
 @function_tool
 def load_fraud_case(username: str) -> dict:
